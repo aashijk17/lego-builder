@@ -31,9 +31,9 @@ mongoose.connect(MONGODB_URI, {
     process.exit(1);
   });
 
-// Import routes (we'll create these next)
-// const setRoutes = require('./routes/sets');
-// const builderRoutes = require('./routes/builder');
+// Import routes
+const setRoutes = require('./routes/sets');
+const builderRoutes = require('./routes/builder');
 
 // Routes
 app.get('/api/health', (req, res) => {
@@ -44,16 +44,9 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Placeholder route
-app.get('/api/sets', (req, res) => {
-  res.json({ 
-    message: 'Sets endpoint coming soon',
-    status: 'in development'
-  });
-});
-
-// app.use('/api/sets', setRoutes);
-// app.use('/api/builder', builderRoutes);
+// Use route handlers
+app.use('/api/sets', setRoutes);
+app.use('/api/builder', builderRoutes);
 
 // Error handling
 app.use((err, req, res, next) => {

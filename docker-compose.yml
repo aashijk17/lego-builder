@@ -52,7 +52,7 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: development
-      MONGODB_URI: mongodb://admin:password@mongodb:27017/admin?authSource=admin
+      MONGODB_URI: mongodb://admin:password@mongodb:27017/lego_builder?authSource=admin
       PORT: 5000
     ports:
       - "5001:5000"
