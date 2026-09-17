@@ -15,4 +15,4 @@ COPY . .
 EXPOSE 3000
 
 # Start with dev server (hot reload)
-CMD ["npm", "run", "dev"]
+CMD ["npm", "run", "dev", "--", "--port", "3000", "--host"]
