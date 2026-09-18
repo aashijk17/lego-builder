@@ -1,207 +1,159 @@
-#!/usr/bin/env python3
-"""
-Fetch LEGO sets and parts from Rebrickable API
-Stores normalized data in MongoDB for the LEGO Builder app
-"""
-
 import requests
 import json
-import time
-from pymongo import MongoClient
-from pymongo.errors import DuplicateKeyError
-from datetime import datetime
 import os
+from urllib.parse import urlencode
+from pymongo import MongoClient
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # Configuration
-REBRICKABLE_API_KEY = os.getenv("REBRICKABLE_API_KEY", "0")  # Get free key from rebrickable.com
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://admin:password@mongodb:27017/lego_builder")
-REBRICKABLE_BASE_URL = "https://rebrickable.com/api/v3"
+REBRICKABLE_API_KEY = os.getenv('REBRICKABLE_API_KEY', 'd1c40f76bbe16d85dd0bccf66b004a56')
+MONGO_URI = os.getenv('MONGO_URI', 'mongodb://admin:password@mongodb:27017/lego_builder?authSource=admin')
+REBRICKABLE_BASE_URL = 'https://rebrickable.com/api/v3'
 
-# API rate limiting (Rebrickable free tier: 100 req/hour)
-REQUEST_DELAY = 0.5  # seconds between requests
+def connect_mongodb():
+    """Connect to MongoDB"""
+    client = MongoClient(MONGO_URI)
+    db = client['lego_builder']
+    return db
 
-class LegoDataFetcher:
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            'Accept': 'application/json'
-        })
-        # Note: Rebrickable API key is optional for basic queries
-        if REBRICKABLE_API_KEY != "0":
-            self.session.headers.update({
-                'Authorization': f'key {REBRICKABLE_API_KEY}'
-            })
+def fetch_all_sets():
+    """Fetch all sets from Rebrickable, sorted by piece count"""
+    print('🟧 Starting LEGO data fetch from Rebrickable...')
+    
+    all_sets = []
+    page = 1
+    
+    # Fetch sets until we have enough
+    while len(all_sets) < 500:  # Fetch extra to ensure we get top 200 after filtering
+        print(f'Fetching page {page}...')
         
-        self.mongo_client = MongoClient(MONGO_URI)
-        self.db = self.mongo_client['lego_builder']
-        self.sets_collection = self.db['sets']
-        self.colors_collection = self.db['colors']
-        
-        # Create indexes
-        self.sets_collection.create_index('setId', unique=True)
-        self.colors_collection.create_index('colorId', unique=True)
-
-    def fetch_sets(self, limit=200):
-        """Fetch most recent LEGO sets"""
-        print(f"Fetching up to {limit} LEGO sets...")
-        
-        url = f"{REBRICKABLE_BASE_URL}/lego/sets"
         params = {
+            'key': REBRICKABLE_API_KEY,
+            'ordering': '-num_parts',  # Sort by piece count descending
             'page_size': 100,
-            'ordering': '-year,-set_num'  # Most recent first
+            'page': page
         }
-        
-        all_sets = []
-        page = 1
-        
-        while len(all_sets) < limit:
-            params['page'] = page
-            print(f"Fetching page {page}...")
-            
-            try:
-                response = self.session.get(url, params=params, timeout=10)
-                response.raise_for_status()
-                data = response.json()
-                
-                sets = data.get('results', [])
-                if not sets:
-                    break
-                
-                all_sets.extend(sets)
-                
-                # Rate limiting
-                time.sleep(REQUEST_DELAY)
-                
-                # Check if more pages exist
-                if not data.get('next'):
-                    break
-                
-                page += 1
-                
-            except requests.RequestException as e:
-                print(f"Error fetching sets: {e}")
-                break
-        
-        return all_sets[:limit]
-
-    def fetch_set_parts(self, set_num):
-        """Fetch parts for a specific set"""
-        url = f"{REBRICKABLE_BASE_URL}/lego/sets/{set_num}/parts"
-        params = {'page_size': 1000}
         
         try:
-            response = self.session.get(url, params=params, timeout=10)
+            response = requests.get(
+                f'{REBRICKABLE_BASE_URL}/lego/sets/',
+                params=params,
+                timeout=10
+            )
             response.raise_for_status()
             data = response.json()
-            time.sleep(REQUEST_DELAY)
-            return data.get('results', [])
-        except requests.RequestException as e:
-            print(f"Error fetching parts for set {set_num}: {e}")
-            return []
+            
+            if not data.get('results'):
+                break
+            
+            all_sets.extend(data['results'])
+            print(f'✅ Fetched {len(data["results"])} sets (total: {len(all_sets)})')
+            
+            page += 1
+        except requests.exceptions.RequestException as e:
+            print(f'❌ Error fetching page {page}: {e}')
+            break
+    
+    # Sort by piece count descending and take top 200
+    all_sets.sort(key=lambda x: x.get('num_parts', 0), reverse=True)
+    top_sets = all_sets[:200]
+    
+    print(f'\n✅ Selected top 200 sets by piece count')
+    print(f'Piece count range: {top_sets[-1].get("num_parts")} - {top_sets[0].get("num_parts")} pieces\n')
+    
+    return top_sets
 
-    def normalize_set(self, raw_set, parts):
-        """Normalize Rebrickable set data to our schema"""
-        
-        brick_list = []
-        for part in parts:
-            brick_list.append({
-                'brickId': part['part']['part_num'],
-                'brickName': part['part']['name'],
-                'colorId': part['color']['id'],
-                'colorName': part['color']['name'],
-                'quantity': part['quantity']
-            })
-        
-        normalized = {
-            'setId': raw_set['set_num'],
-            'name': raw_set['name'],
-            'year': int(raw_set['year']),
-            'theme': raw_set.get('theme_id', 'unknown'),
-            'piecesCount': int(raw_set['num_parts']),
-            'imageUrl': raw_set.get('set_img_url', ''),
-            'rebrickableUrl': raw_set.get('set_url', ''),
-            'brickList': brick_list,
-            'fetchedAt': datetime.utcnow()
-        }
-        
-        return normalized
+def fetch_set_parts(set_id):
+    """Fetch parts for a specific set"""
+    params = {'key': REBRICKABLE_API_KEY}
+    
+    try:
+        response = requests.get(
+            f'{REBRICKABLE_BASE_URL}/lego/sets/{set_id}/parts/',
+            params=params,
+            timeout=10
+        )
+        response.raise_for_status()
+        return response.json().get('results', [])
+    except requests.exceptions.RequestException as e:
+        print(f'⚠️  Error fetching parts for {set_id}: {e}')
+        return []
 
-    def store_sets(self, sets_data):
-        """Store sets in MongoDB"""
-        print(f"Storing {len(sets_data)} sets in MongoDB...")
+def process_sets(sets, db):
+    """Process and store sets in MongoDB"""
+    print(f'Processing {len(sets)} sets...\n')
+    
+    sets_collection = db['sets']
+    errors = 0
+    
+    # Clear existing data
+    sets_collection.delete_many({})
+    
+    for idx, set_data in enumerate(sets, 1):
+        try:
+            set_id = set_data.get('set_num')
+            print(f'Processing set {idx}/200: {set_data.get("name")} ({set_data.get("num_parts")} pieces)', end='')
+            
+            # Fetch parts for this set
+            parts = fetch_set_parts(set_id)
+            
+            # Normalize brick data
+            brick_list = []
+            for part in parts:
+                brick_list.append({
+                    'brickId': part.get('part', {}).get('part_num'),
+                    'brickName': part.get('part', {}).get('name'),
+                    'quantity': part.get('quantity'),
+                    'colorId': part.get('color', {}).get('id'),
+                    'colorName': part.get('color', {}).get('name')
+                })
+            
+            # Store in MongoDB
+            set_doc = {
+                'setId': set_id,
+                'name': set_data.get('name'),
+                'year': set_data.get('year'),
+                'piecesCount': set_data.get('num_parts'),
+                'imageUrl': set_data.get('set_img_url'),
+                'rebrickableUrl': f'https://rebrickable.com/sets/{set_id}/',
+                'theme': set_data.get('theme', {}).get('id'),
+                'brickList': brick_list,
+                'fetchedAt': __import__('datetime').datetime.utcnow()
+            }
+            
+            sets_collection.insert_one(set_doc)
+            print(' ✅')
         
-        stored = 0
-        errors = 0
-        
-        for set_data in sets_data:
-            try:
-                # Upsert - update if exists, insert if doesn't
-                self.sets_collection.update_one(
-                    {'setId': set_data['setId']},
-                    {'$set': set_data},
-                    upsert=True
-                )
-                stored += 1
-                
-                if stored % 10 == 0:
-                    print(f"  Stored {stored} sets...")
-                    
-            except Exception as e:
-                print(f"Error storing set {set_data.get('setId')}: {e}")
-                errors += 1
-        
-        print(f"✅ Successfully stored {stored} sets ({errors} errors)")
-        return stored
+        except Exception as e:
+            print(f' ❌')
+            print(f'  Error: {e}')
+            errors += 1
+    
+    return errors
 
-    def run(self, limit=200):
-        """Run the full data fetch pipeline"""
-        print("🟧 Starting LEGO data fetch from Rebrickable...")
-        print(f"Target: {limit} sets\n")
+def main():
+    try:
+        # Connect to database
+        db = connect_mongodb()
         
         # Fetch sets
-        raw_sets = self.fetch_sets(limit=limit)
-        print(f"✅ Fetched {len(raw_sets)} sets\n")
+        sets = fetch_all_sets()
         
-        if not raw_sets:
-            print("❌ No sets found. Check your internet connection.")
-            return False
+        # Process and store
+        errors = process_sets(sets, db)
         
-        # Fetch parts for each set and normalize
-        normalized_sets = []
-        for i, raw_set in enumerate(raw_sets, 1):
-            print(f"Processing set {i}/{len(raw_sets)}: {raw_set['name']}")
-            
-            parts = self.fetch_set_parts(raw_set['set_num'])
-            normalized = self.normalize_set(raw_set, parts)
-            normalized_sets.append(normalized)
+        # Summary
+        sets_collection = db['sets']
+        count = sets_collection.count_documents({})
         
-        print()
-        
-        # Store in database
-        self.store_sets(normalized_sets)
-        
-        print("\n✅ Data fetch complete!")
-        
-        # Print summary
-        count = self.sets_collection.count_documents({})
-        total_pieces = sum(s['piecesCount'] for s in normalized_sets)
-        print(f"\nDatabase Summary:")
-        print(f"  Total sets: {count}")
-        print(f"  Sets just fetched: {len(normalized_sets)}")
-        print(f"  Total pieces: {total_pieces:,}")
-        
-        return True
-
-if __name__ == "__main__":
-    fetcher = LegoDataFetcher()
-    try:
-        fetcher.run(limit=200)
-    except KeyboardInterrupt:
-        print("\n\n⚠️ Fetch interrupted by user")
+        print(f'\n✅ Successfully stored {count} sets ({errors} errors)')
+        print('✅ Data fetch complete!')
+    
     except Exception as e:
-        print(f"\n\n❌ Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f'❌ Fatal error: {e}')
+        exit(1)
+
+if __name__ == '__main__':
+    main()

@@ -35,6 +35,8 @@ router.post('/findBuildable', async (req, res) => {
 
     allSets.forEach(candidateSet => {
       if (setIds.includes(candidateSet.setId)) return; // Skip owned sets
+      if (candidateSet.piecesCount === 0) return; // Skip sets with 0 pieces
+      if (!candidateSet.brickList || candidateSet.brickList.length === 0) return; // Skip sets with no bricks
 
       let canBuild = true;
       let missingParts = [];
@@ -67,13 +69,13 @@ router.post('/findBuildable', async (req, res) => {
           piecesCount: candidateSet.piecesCount,
           imageUrl: candidateSet.imageUrl
         });
-      } else if (totalHave / totalNeeded >= 0.75) {
+      } else if (totalNeeded > 0 && totalHave / totalNeeded >= 0.75) {
         // "Almost buildable" - have 75%+ of parts
         almostBuildable.push({
           setId: candidateSet.setId,
           name: candidateSet.name,
           progress: Math.round((totalHave / totalNeeded) * 100),
-          missingParts: missingParts.slice(0, 5) // Top 5 missing
+          missingParts: missingParts.slice(0, 5)
         });
       }
     });

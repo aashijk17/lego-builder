@@ -9,21 +9,24 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+  // Use 5001 (the actual backend port after port mapping)
+  const API_URL = 'http://localhost:5001'
 
   // Check if backend is ready
   useEffect(() => {
     fetch(`${API_URL}/api/health`)
       .then(res => res.json())
-      .then(data => console.log('Backend status:', data))
+      .then(data => console.log('✅ Backend status:', data))
       .catch(err => {
-        console.error('Backend not ready:', err)
-        setError('Cannot connect to backend. Is Docker running?')
+        console.error('❌ Backend not ready:', err)
+        setError('Cannot connect to backend. Is it running on 5001?')
       })
   }, [])
 
   const handleSelectSets = (sets) => {
     setSelectedSets(sets)
+    // Clear results when selection changes
+    setResults(null)
   }
 
   const handleFindBuildable = async () => {
@@ -70,13 +73,13 @@ function App() {
             disabled={loading || selectedSets.length === 0}
             className="find-button"
           >
-            {loading ? 'Finding...' : 'Find Buildable Sets →'}
+            {loading ? '⏳ Finding...' : '🔍 Find Buildable Sets →'}
           </button>
         </section>
 
         {results && (
           <section className="results-section">
-            <h2>Results</h2>
+            <h2>Step 2: Your Results</h2>
             <Results data={results} ownedSets={selectedSets} />
           </section>
         )}

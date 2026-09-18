@@ -10,7 +10,7 @@ router.get('/', async (req, res) => {
     console.log('Found:', sets.length, 'sets');
     res.json({
       count: sets.length,
-      sets: sets.slice(0, 10) // Show first 10
+      sets
     });
   } catch (err) {
     console.error('Error finding sets:', err);
